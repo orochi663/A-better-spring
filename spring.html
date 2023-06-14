@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js Ellipse</title>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script type="module">
+// Set up the scene, camera, and renderer
+const scene = new THREE.Scene();
+
+import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.121.1/examples/jsm/controls/OrbitControls.js";
+import { VertexNormalsHelper } from "https://cdn.jsdelivr.net/npm/three@0.121.1/examples/jsm/helpers/VertexNormalsHelper.js";
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(0, 0, 5);
+
+const renderer = new THREE.WebGLRenderer();
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const helixPositions = [];
+
+
+function generateHelixOnY(height, numTurns, radius, dx)
+{
+    let angle = 0;
+	const _2PI = Math.PI*2;
+	
+    const angleDelta = _2PI / dx; // full circles is divided into dx segments
+
+	let y = 0;
+	let deltaY = height/((numTurns+1)*dx);
+	let x = 0;
+	let z = 0;
+	let r_2 = (radius/2);	
+	angle = Math.PI;
+	while(angle <= _2PI)
+	{
+		x = r_2* Math.cos(angle)+r_2;
+		z = r_2* Math.sin(angle);
+		angle += (angleDelta);
+		helixPositions.push(new THREE.Vector3(x, y, z));
+		y += deltaY;
+	}
+	for(let j = 0; j < numTurns; j++)
+	{
+		angle = 0;
+		while(angle <= _2PI)
+		{
+			x = radius * Math.cos(angle);
+			z = radius * Math.sin(angle);
+			angle += angleDelta;
+			helixPositions.push(new THREE.Vector3(x, y, z));
+			y += deltaY;
+		}
+	}
+
+	angle = 0;
+	while(angle <= Math.PI)
+	{
+		x = r_2 * Math.cos(angle)+r_2;
+		z = r_2 * Math.sin(angle);
+		helixPositions.push(new THREE.Vector3(x, y, z));
+		y += deltaY;
+		angle += (angleDelta);
+	}
+	x = r_2 * Math.cos(angle)+r_2;
+	z = r_2 * Math.sin(angle);
+	helixPositions.push(new THREE.Vector3(x, y, z));
+
+}
+
+
+function applyTranslation(points, translation, angle)
+{
+	var rotation = new THREE.Matrix4();	
+	rotation.makeRotationY(angle);
+	const newPoints = [];
+	for (let i = 0; i < points.length; i++) {
+		newPoints.push(new THREE.Vector3(points[i].x, points[i].y, -points[i].z))
+
+		newPoints[i].add(translation);
+	}
+	return newPoints;
+}
+
+
+// Create the ellipse geometry
+function generateOriginCircleAtY(radius, dx, y)
+{
+	const positions = [];
+    let angle =0;
+    const angleDelta = 2 * Math.PI / dx; // full circle is divided into dx segments
+    let j = 1;
+    for (let i = 0; i < dx; i++)
+    {
+        const x = radius * Math.cos(angle);
+        const z = radius * Math.sin(angle);
+        angle += angleDelta;
+        positions.push(new THREE.Vector3(x, y, z));
+    }
+	return positions;
+}
+
+function generateOriginCircleAtPositionLookingAt(radius, dx, position, to)
+{
+	const positions = [];
+    let angle =0;
+    const angleDelta = 2 * Math.PI / dx; // full circle is divided into dx segments
+    let j = 1;
+	const up = new THREE.Vector3(0, 1, 0);
+    const mat = new THREE.Matrix4().lookAt(position, to, up);
+	
+	
+    for (let i = 0; i < dx; i++)
+    {
+        const x = radius * Math.cos(angle);
+        const z = radius * Math.sin(angle);
+		const y = 0;
+        angle += angleDelta;
+		let p = new THREE.Vector3(
+		-z, 
+		x, 
+		y
+		);
+		
+		p.applyMatrix4(mat);
+		p.add(position);
+        positions.push(p);
+    }
+	return positions;
+}
+
+const helixSurfacePoints = [];
+function generateHelixSurface(radius, dx)
+{
+	let i = 0;
+	const sz = helixPositions.length;
+
+	let to = new THREE.Vector3();
+
+	let normal = new THREE.Vector3();
+	normal.subVectors(helixPositions[i+1], helixPositions[i]);
+	normal.normalize();
+	
+	while(i < sz)
+	{
+		if(i < sz-1)
+		{
+			normal.subVectors(helixPositions[i+1], helixPositions[i]);
+			normal.normalize();
+			to = helixPositions[i+1];
+		}
+		var circle = generateOriginCircleAtPositionLookingAt(radius, dx, helixPositions[i], to);
+		helixSurfacePoints.push(...circle);
+		i++;
+	}
+}
+
+function generateCylindericalSurface(startPosition, endPosition, startRadius, endRadius, dx, dy)
+{
+	let positions = [];
+	const totalHeight = startPosition.distanceTo(endPosition);
+	const dH = (totalHeight / dy);
+    let y = 0;
+    
+    for (let i = 0; i <= dy; i++)// i = 0 will be the lower cap
+    {
+        let r_h = ((y * (endRadius - startRadius)) / totalHeight) + startRadius;
+		let circlePositions = generateOriginCircleAtY(r_h, dx, y);
+        positions.push(...circlePositions);// generate surface vertices
+        y += dH;
+    }	
+	return positions;
+}
+function getCircleIndices(dx)
+{
+	const indices = [];
+    let j = 1;
+    for (let i = 0; i < dx; ++i)
+    {
+        if (i > 0)
+        {
+            indices.push(0);
+            indices.push(j);
+            j++;
+            indices.push(j);
+        }
+    }
+    indices.push(0);
+    indices.push(j);
+    indices.push(1);
+	return indices;
+}
+function getsurfaceIndices(dx, dy)
+{
+	const indices = [];
+	for (let j = 0; j < dy; j++)
+    {
+		let i = 0;
+		let bl = 0;
+		let tl = 0;
+		while(i < (dx-1))
+        {
+            const bottomLeft = i + (j * dx);
+            const bottomRight = bottomLeft+1;
+            const topLeft = (i + ((j + 1) * dx));
+            const topRight = topLeft+1;
+
+            // triangle depends on widning so anticlockwise winding = 
+            // bottomLeft, topLeft, bottomRight
+            // bottomRight, topLeft, topRight
+
+            indices.push(bottomLeft);
+            indices.push(topLeft);
+            indices.push(bottomRight);
+			
+            indices.push(bottomRight);
+            indices.push(topLeft);
+            indices.push(topRight);
+			++i;
+			if(i == dx-1)
+			{
+				bl = bottomRight;
+				tl = topRight;
+			}
+        }
+		const bottomLeft = bl;
+		const topLeft = tl;
+		const bottomRight = (j * dx);
+		const topRight = ((j + 1) * dx);
+
+		indices.push(bottomLeft);
+		indices.push(topLeft);
+		indices.push(bottomRight);
+		
+		indices.push(bottomRight);
+		indices.push(topLeft);
+		indices.push(topRight);		
+    }
+	return indices;
+}
+
+// create bottom at h
+//positions.push(0, h, 0);
+//generateOriginCircleAtY(radius, dx, h);
+//getCircleIndices(dx, dx+1);
+
+
+
+//helix
+//height, numTurns, radius, dx
+const height = 10;
+const numTurns = 3;
+const majorRadius = 5;
+const dx = 50;
+generateHelixOnY(height, numTurns, majorRadius, dx);
+const serfaceDx = 25;
+generateHelixSurface(0.2, serfaceDx);
+let HelixSurfaceIndices = [];
+const dy = helixPositions.length;
+HelixSurfaceIndices = getsurfaceIndices(serfaceDx, dy-1);
+
+const helixGeometry = new THREE.BufferGeometry();
+helixGeometry.setFromPoints(helixPositions);
+const helixMaterial = new THREE.LineBasicMaterial( { color: 0xff0fff } )
+const helix = new THREE.Line( helixGeometry, helixMaterial );
+scene.add(helix);
+
+const helixSurfaceGemetry = new THREE.BufferGeometry();
+const useWireFrame = true;
+if(useWireFrame)
+{
+    helixSurfaceGemetry.setFromPoints(helixSurfacePoints);
+    helixSurfaceGemetry.setIndex(HelixSurfaceIndices);
+    const helixSurfaceMaterial = new THREE.MeshBasicMaterial({color: 0x1df0ff, wireframe: true});
+    const helixSurface = new THREE.Mesh(helixSurfaceGemetry, helixSurfaceMaterial);
+    scene.add(helixSurface);
+}
+else
+{
+    helixSurfaceGemetry.setFromPoints(helixSurfacePoints);
+    const helixSurfaceMaterial = new THREE.LineBasicMaterial( { color: 0xffff00 } )
+    const helixSurface = new THREE.Line( helixSurfaceGemetry, helixSurfaceMaterial );
+    scene.add(helixSurface);
+}
+
+const axesHelper = new THREE.AxesHelper( 10 );
+scene.add( axesHelper );
+
+//2point cylinder
+
+const cdx = 15;
+const cdy = 12;
+const ch = 10;
+const cstart = new THREE.Vector3(0, 0, 0);
+const cend = new THREE.Vector3(0, ch, 0);
+const cstartRadius = 5;
+const cendRadius = 5;
+
+// create surface
+const surfacePositions = generateCylindericalSurface(cstart, cend, cstartRadius, cendRadius, cdx, cdy);
+const surfaceIndices = getsurfaceIndices(cdx, cdy);
+const cylinderSurfaceGeometry = new THREE.BufferGeometry();
+const cylinderSurfaceMaterial = new THREE.MeshBasicMaterial({color: 0x00ff00, wireframe: true});
+const cylinderSurface = new THREE.Mesh(cylinderSurfaceGeometry, cylinderSurfaceMaterial);
+cylinderSurfaceGeometry.setFromPoints(surfacePositions);
+cylinderSurfaceGeometry.setIndex(surfaceIndices);
+//cylinderSurface.rotation.x = Math.PI / 2;
+
+scene.add(cylinderSurface);
+
+
+// create top
+let topPositions = []
+topPositions.push(new THREE.Vector3(0, 0, 0));
+let pt = generateOriginCircleAtY(cstartRadius, cdx, 0);
+topPositions.push(...pt);
+console.log(topPositions);
+let topIndices = [];
+topIndices = getCircleIndices(cdx);
+console.log(topIndices);
+
+const cylinderTopGeometry = new THREE.BufferGeometry();
+cylinderTopGeometry.setFromPoints(topPositions);
+cylinderTopGeometry.setIndex(topIndices);
+const cylinderTopMaterial = new THREE.MeshBasicMaterial({color: 0x0cffc0, wireframe: true});
+const cylinderTopSurface = new THREE.Mesh(cylinderTopGeometry, cylinderTopMaterial);
+//cylinderTopSurface.rotation.x = Math.PI / 2;
+scene.add(cylinderTopSurface);
+
+// create bottom
+let bottomPositions = []
+bottomPositions.push(new THREE.Vector3(0, ch, 0));
+let pb = generateOriginCircleAtY(cendRadius, cdx, ch);
+bottomPositions.push(...pb);
+let bottomIndices = [];
+bottomIndices = getCircleIndices(cdx);
+
+const cylinderBottomGeometry = new THREE.BufferGeometry();
+cylinderBottomGeometry.setFromPoints(bottomPositions);
+cylinderBottomGeometry.setIndex(bottomIndices);
+
+
+const cylinderBottomMaterial = new THREE.MeshBasicMaterial({color: 0xc0ff0c, wireframe: true});
+const cylinderBottomSurface = new THREE.Mesh(cylinderBottomGeometry, cylinderBottomMaterial);
+//cylinderBottomSurface.rotation.x = Math.PI / 2;
+scene.add(cylinderBottomSurface);
+
+//Add orbit controls to the camera
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.04;
+controls.target.set(0, 0, 0); // Set the target for the controls
+
+//Create the animation loop
+function animate() {
+    requestAnimationFrame(animate);
+	controls.update();
+    renderer.render(scene, camera);
+}
+
+animate();
+</script>
+</body>
+</html>
